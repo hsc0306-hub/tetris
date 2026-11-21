@@ -347,7 +347,7 @@ async function kakaoLogin(){
     try{await window.Capacitor.Plugins.Browser.open({url:data.url})}catch(e){authMsg('로그인 창을 열지 못했습니다: '+e.message)}
     return;
   }
-  const {error}=await sb.auth.signInWithOAuth({provider:'kakao',options:{redirectTo:location.href}});
+  const {error}=await sb.auth.signInWithOAuth({provider:'kakao',options:{redirectTo:location.origin+location.pathname}});
   if(error)authMsg('카카오 로그인 실패: '+error.message);
 }
 /* 앱: 카카오 로그인 후 com.linkblock.battle://auth 로 돌아오면 여기서 로그인 처리 */

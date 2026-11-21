@@ -1,0 +1,13 @@
+{
+  "appId": "com.linkblock.battle",
+  "appName": "링크 블록 배틀",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": [
+      "*.supabase.co",
+      "*.kakao.com",
+      "*.kakaocdn.net",
+      "*.daum.net"
+    ]
+  }
+}

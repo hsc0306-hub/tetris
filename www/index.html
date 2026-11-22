@@ -184,6 +184,11 @@ button.kakao{background:#FEE500;color:#191600;font-weight:800}.auth-msg{min-heig
       <div class="row"><button id="installBtn" class="pri" style="flex:1;display:none">홈 화면에 추가</button></div>
     </div>
     <div class="card">
+      <h3>🤖 AI와 한판 붙기</h3>
+      <div class="small">인터넷 없이 컴퓨터와 1:1 대결! 줄을 지우면 AI에게 공격이 가고, AI도 공격해 옵니다. (랭킹에는 기록되지 않아요)</div>
+      <div class="row"><button class="aiBtn" data-lv="easy" style="flex:1">쉬움</button><button class="aiBtn pri" data-lv="normal" style="flex:1">보통</button><button class="aiBtn" data-lv="hard" style="flex:1">어려움</button></div>
+    </div>
+    <div class="card">
       <h3>🎯 혼자 하기 (싱글플레이)</h3>
       <div class="small">인터넷 연결 없이 혼자서 최고 기록에 도전하세요. 로그인 상태면 점수가 랭킹에 올라갑니다.</div>
       <div class="row"><button id="soloBtn" class="pri" style="flex:1">▶ 싱글플레이 시작</button></div>
@@ -607,7 +612,7 @@ async function recordRound(result){
 /* ---------- 대결 방식 (1:1 / 1:2 / 2:2) ----------
    방장이 중심인 '별 모양' 연결입니다. 손님은 방장하고만 연결되고, 방장이 모두에게 전달합니다.
    방장의 입력도 손님과 같은 길(hostHandle)로 처리해서 규칙이 하나로 유지됩니다. */
-const MODES={'1v1':{label:'1:1',max:2,cap:[1,1]},'1v2':{label:'1:2',max:3,cap:[1,2]},'2v2':{label:'2:2',max:4,cap:[2,2]},'1v1v1':{label:'1:1:1',max:3,cap:[1,1,1],ffa:true},'1v1v1v1':{label:'1:1:1:1',max:4,cap:[1,1,1,1],ffa:true},'solo':{label:'솔로',max:1,cap:[1],solo:true}};
+const MODES={'1v1':{label:'1:1',max:2,cap:[1,1]},'1v2':{label:'1:2',max:3,cap:[1,2]},'2v2':{label:'2:2',max:4,cap:[2,2]},'1v1v1':{label:'1:1:1',max:3,cap:[1,1,1],ffa:true},'1v1v1v1':{label:'1:1:1:1',max:4,cap:[1,1,1,1],ffa:true},'solo':{label:'솔로',max:1,cap:[1],solo:true},'ai':{label:'AI',max:2,cap:[1,1],ai:true}};
 let mode='1v1',MAXP=2,me=0,players=[],conns=new Map(),snaps={},teamWins=[0,0,0,0],inRound=false,startSize=[1,1],selMode='1v1';
 let peer=null,conn=null,snapTimer=null,pingTimer=null,lastRx=0,roomCode='';
 const st=t=>$('st').textContent=t;
@@ -619,6 +624,128 @@ const liveCount=()=>players.filter(p=>!p.gone).length;
 let soloBest=0;try{soloBest=+localStorage.getItem('soloBest')||0}catch(e){}
 function startSolo(){
   setMode('solo');isHost=true;me=0;players=[mkPlayer(0,myName(),0)];conns.clear();inRound=false;myRoom=null;
+  enterGame();
+  players[0].ready=true;myReady=true;checkStart();
+}
+
+/* ---------- AI 대전 ----------
+   방장(나) 쪽 기기 안에서 AI가 자기 판을 따로 굴립니다. 공격·탈락은 사람 손님과 같은 길(hostHandle)로 알립니다. */
+const AI_LV={easy:{name:'AI(쉬움)',think:750,step:140,drop:28,miss:.3,top:4},normal:{name:'AI(보통)',think:380,step:85,drop:20,miss:.08,top:2},hard:{name:'AI(어려움)',think:130,step:45,drop:14,miss:0,top:1}};
+const AI={g:null,pc:null,q:[],bag:[],rng:null,pend:0,combo:-1,score:0,lines:0,lv:'normal',lvName:'',st:'think',t:0,tgt:null,rot:0,snapT:0,dropped:false};
+function aiNext(){
+  if(!AI.bag.length){AI.bag=TYPES.split('');for(let i=6;i>0;i--){const j=Math.floor(AI.rng()*(i+1));[AI.bag[i],AI.bag[j]]=[AI.bag[j],AI.bag[i]]}}
+  return AI.bag.pop();
+}
+function aiCol(g,m,x,y){
+  for(let j=0;j<m.length;j++)for(let i=0;i<m[j].length;i++){
+    if(!m[j][i])continue;const nx=x+i,ny=y+j;
+    if(nx<0||nx>=W||ny>=H)return true;
+    if(ny>=0&&g[ny][nx])return true;
+  }
+  return false;
+}
+function aiInit(seed){
+  AI.rng=mk((seed^0x5bd1e995)>>>0);AI.bag=[];AI.q=[];
+  AI.g=Array.from({length:H},()=>Array(W).fill(0));
+  AI.pend=0;AI.combo=-1;AI.score=0;AI.lines=0;AI.snapT=0;
+  for(let i=0;i<4;i++)AI.q.push(aiNext());
+  AI.pc=null;aiSpawn();
+}
+function aiSpawn(){
+  const t=AI.q.shift();AI.q.push(aiNext());
+  const m=SHAPES[t].map(r=>r.slice());
+  AI.pc={t,m,x:Math.floor((W-m.length)/2),y:t==='I'?-1:0};
+  if(aiCol(AI.g,m,AI.pc.x,AI.pc.y)){AI.pc=null;return false}
+  aiPlan();AI.st='think';AI.t=AI_LV[AI.lv].think;return true;
+}
+function aiEval(g,cleared){
+  const hs=Array(W).fill(0);let holes=0;
+  for(let x=0;x<W;x++){
+    let seen=false;
+    for(let y=0;y<H;y++){if(g[y][x]){if(!seen){hs[x]=H-y;seen=true}}else if(seen)holes++}
+  }
+  let agg=0,bump=0;for(let x=0;x<W;x++){agg+=hs[x];if(x)bump+=Math.abs(hs[x]-hs[x-1])}
+  return -0.51*agg+0.76*cleared-0.36*holes-0.18*bump;
+}
+function aiPlan(){
+  const p=AI.pc,L=AI_LV[AI.lv],cands=[];
+  let m=p.m;
+  for(let r=0;r<4;r++){
+    if(r>0)m=rotCW(m);
+    for(let x=-2;x<W;x++){
+      if(aiCol(AI.g,m,x,p.y))continue;
+      let y=p.y;while(!aiCol(AI.g,m,x,y+1))y++;
+      const g=AI.g.map(row=>row.slice());let ok=true;
+      m.forEach((row,j)=>row.forEach((v,i)=>{if(v){const yy=y+j,xx=x+i;if(yy<0)ok=false;else g[yy][xx]=v}}));
+      if(!ok)continue;
+      const keep=g.filter(row=>!row.every(v=>v)),n=H-keep.length;
+      while(keep.length<H)keep.unshift(Array(W).fill(0));
+      cands.push({r,x,s:aiEval(keep,n)+(n>=4?2:0)});
+    }
+  }
+  if(!cands.length){AI.tgt={r:0,x:p.x};return}
+  cands.sort((a,b)=>b.s-a.s);
+  let pick=cands[0];
+  if(Math.random()<L.miss)pick=cands[Math.min(cands.length-1,Math.floor(Math.random()*L.top))];
+  AI.tgt=pick;AI.rot=pick.r;
+}
+function aiSnap(){
+  const rows=AI.g.map(r=>r.slice());
+  const p=AI.pc;
+  if(p)p.m.forEach((r,j)=>r.forEach((v,i)=>{const x=p.x+i,y=p.y+j;if(v&&y>=0&&y<H&&x>=0&&x<W)rows[y][x]=v}));
+  return rows.map(r=>r.join('')).join('');
+}
+function aiLock(){
+  const p=AI.pc;if(!p)return;
+  p.m.forEach((r,j)=>r.forEach((v,i)=>{if(v){const y=p.y+j,x=p.x+i;if(y>=0)AI.g[y][x]=v}}));
+  AI.g=AI.g.filter(r=>!r.every(v=>v));
+  const n=H-AI.g.length;
+  while(AI.g.length<H)AI.g.unshift(Array(W).fill(0));
+  AI.lines+=n;AI.score+=[0,100,300,500,800][n];
+  if(n>0){
+    AI.combo++;
+    let a=ATTACK[n]+comboBonus(AI.combo);
+    const c=Math.min(AI.pend,a);AI.pend-=c;a-=c;
+    if(a>0)hostHandle(1,{t:'atk',n:a});
+  }else{
+    AI.combo=-1;
+    if(AI.pend>0){
+      const k=Math.min(AI.pend,8);AI.pend-=k;
+      const hole=Math.floor(Math.random()*W);
+      for(let i=0;i<k;i++){
+        if(AI.g[0].some(v=>v)){AI.pc=null;hostHandle(1,{t:'over'});return}
+        AI.g.shift();AI.g.push(Array.from({length:W},(_,x)=>x===hole?0:8));
+      }
+    }
+  }
+  if(!aiSpawn()){hostHandle(1,{t:'over'})}
+}
+function aiStep(dt){
+  if(!AI.pc)return;
+  const L=AI_LV[AI.lv];
+  AI.snapT+=dt;
+  AI.t-=dt;
+  let guard=0;
+  while(AI.t<=0&&AI.pc&&guard++<40){
+    const p=AI.pc;
+    if(AI.st==='think'){AI.st='move'}
+    else if(AI.st==='move'){
+      if(AI.rot>0){const m=rotCW(p.m);if(!aiCol(AI.g,m,p.x,p.y))p.m=m;AI.rot--;AI.t+=L.step}
+      else if(p.x!==AI.tgt.x){const nx=p.x+(AI.tgt.x>p.x?1:-1);if(aiCol(AI.g,p.m,nx,p.y)){AI.st='drop'}else{p.x=nx;AI.t+=L.step}}
+      else AI.st='drop';
+    }else{
+      if(!aiCol(AI.g,p.m,p.x,p.y+1)){p.y++;AI.t+=L.drop}
+      else{aiLock();AI.t+=L.drop}
+    }
+    if(!AI.pc)return;
+  }
+  if(AI.snapT>=120){AI.snapT=0;hostHandle(1,{t:'b',g:aiSnap(),s:AI.score,l:AI.lines,p:AI.pend})}
+}
+function startAI(lv){
+  if(!AI_LV[lv])lv='normal';
+  AI.lv=lv;AI.lvName=AI_LV[lv].name;
+  setMode('ai');isHost=true;me=0;conns.clear();inRound=false;myRoom=null;
+  players=[mkPlayer(0,myName(),0),mkPlayer(1,AI.lvName,1)];players[1].ai=true;players[1].ready=true;
   enterGame();
   players[0].ready=true;myReady=true;checkStart();
 }
@@ -666,7 +793,7 @@ function netTick(){
   const now=performance.now();
   if(isHost){
     bcast({t:'p'});
-    players.slice().forEach(p=>{if(p.id!==0&&!p.gone&&now-p.rx>10000)hostDrop(p.id)});
+    players.slice().forEach(p=>{if(p.id!==0&&!p.ai&&!p.gone&&now-p.rx>10000)hostDrop(p.id)});
   }else{
     send({t:'p'});
     if(phase!=='dead'&&phase!=='lobby'&&now-lastRx>10000)onDisc();
@@ -766,7 +893,7 @@ function routeAttack(from,n){
   const t=foes[Math.floor(Math.random()*foes.length)];
   let k=n;
   if(startSize[t.team]===1&&startSize[ft]>1)k=Math.max(1,Math.ceil(n/2)); /* 혼자인 쪽은 받는 공격이 줄어듭니다 */
-  if(t.id===0){pending+=k;sfx('warn')}else sendTo(t.id,{t:'atk',n:k});
+  if(t.id===0){pending+=k;sfx('warn')}else if(t.ai)AI.pend+=k;else sendTo(t.id,{t:'atk',n:k});
 }
 function hostDead(id){
   const p=players.find(x=>x.id===id);
@@ -785,7 +912,7 @@ function hostCheckEnd(){
 function checkStart(){
   if(!isHost||inRound||!(phase==='wait'||phase==='over'))return;
   const live=players.filter(p=>!p.gone);
-  if(live.length<(migratedRoom?2:MAXP)||!live.every(p=>p.ready)||new Set(live.map(p=>p.team)).size<(MODES[mode].solo?1:2))return;
+  if(live.length<(migratedRoom?2:MAXP)||!live.every(p=>p.ready||p.ai)||new Set(live.map(p=>p.team)).size<(MODES[mode].solo?1:2))return;
   const seed=Math.floor(Math.random()*2**31);
   startSize=MODES[mode].cap.map((_,i)=>teamCount(i));
   inRound=true;
@@ -796,6 +923,7 @@ function checkStart(){
 function startRound(seed){
   snaps={};
   players.forEach(p=>{p.alive=true;p.ready=false});
+  if(MODES[mode].ai)aiInit(seed);
   init(seed);
 }
 function onEnd(win){
@@ -810,7 +938,7 @@ function onEnd(win){
     soloBest=best;
     endText='게임 오버\n점수 '+score+' · 줄 '+lines+(isNew&&score>0?'\n🏆 최고 기록!':'\n최고 기록 '+best);
   }else if(won)sfx('win');else if(!wasSpec&&win>=0)sfx('lose');
-  if(MODES[mode].solo){if(score>0)recordRound('solo')}else recordRound(won?'win':'loss');
+  if(MODES[mode].solo){if(score>0)recordRound('solo')}else if(!MODES[mode].ai)recordRound(won?'win':'loss');
   if(isHost){
     players=players.filter(p=>!p.gone);
     players.forEach(p=>{p.ready=false;p.alive=true});
@@ -1004,6 +1132,7 @@ async function copyText(t){
 }
 $('mkRoom').onclick=makeRoom;
 $('soloBtn').onclick=startSolo;
+document.querySelectorAll('.aiBtn').forEach(b=>b.onclick=()=>startAI(b.dataset.lv));
 $('cpBtn').onclick=async()=>{
   await copyText(inviteText(inviteUrl()));
   st('복사했습니다! 카카오톡 대화창에 붙여넣어 보내세요.');
@@ -1397,7 +1526,7 @@ function ui(now){
   const rdy=need?(isHost?'참가자를 기다리는 중…\n방 코드 '+roomCode:'다른 참가자를 기다리는 중…'):(myReady?'모두 준비되길 기다리는 중…':'준비를 누르세요');
   const roster=()=>{
     if(MODES[mode].solo)return '솔로 플레이'+(soloBest?'\n최고 기록 '+soloBest:'');
-    const L=[MODES[mode].label+' 대결 · '+liveCount()+'/'+MAXP+'명'];
+    const L=[MODES[mode].label+(MODES[mode].ai?' 대전 · '+(AI.lvName||''):' 대결 · '+liveCount()+'/'+MAXP+'명')];
     if(MODES[mode].ffa){
       L.push('개인전: '+(players.filter(p=>!p.gone).map(p=>(p.id===me?'★':'')+p.name+(p.ready?'✔':'')).join(', ')||'(빈 자리)'));
     }else[0,1].forEach(tm=>{
@@ -1429,9 +1558,9 @@ function ui(now){
   const cmOn=canTeamChat(),cmEl=$('chatMode');
   if(cmEl.style.display!==(cmOn?'flex':'none'))cmEl.style.display=cmOn?'flex':'none';
   if(!cmOn&&chatTeam)setCM(false);
-  const cb=$('chatBtn');if(cb.style.display!==(MODES[mode].solo?'none':''))cb.style.display=MODES[mode].solo?'none':'';
+  const cb=$('chatBtn');if(cb.style.display!==((MODES[mode].solo||MODES[mode].ai)?'none':''))cb.style.display=(MODES[mode].solo||MODES[mode].ai)?'none':'';
   const tb=$('teamBtn'),ot=1-myTeam();
-  tb.style.display=(mode==='1v1'||MODES[mode].ffa||MODES[mode].solo)?'none':'inline-block';
+  tb.style.display=(mode==='1v1'||MODES[mode].ffa||MODES[mode].solo||MODES[mode].ai)?'none':'inline-block';
   tb.disabled=!((phase==='wait'||phase==='over')&&MODES[mode].cap[ot]>teamCount(ot));
   tb.textContent='팀 바꾸기 ('+(myTeam()?'B→A':'A→B')+')';
 }
@@ -1456,6 +1585,7 @@ function loop(ts){
     if(phase==='play'&&!pc&&queue.length){ /* 복구: 블록이 없으면 새로 생성 */
       const t=queue.shift();fillQ();if(!spawn(t))lose();
     }
+    if(isHost&&MODES[mode].ai&&phase==='play'&&inRound)aiStep(dt);
     if(phase==='play'&&pc){
       dropT+=dt;
       const g=Math.max(60,800-(level-1)*65);

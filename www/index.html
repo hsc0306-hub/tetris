@@ -625,7 +625,6 @@ let soloBest=0;try{soloBest=+localStorage.getItem('soloBest')||0}catch(e){}
 function startSolo(){
   setMode('solo');isHost=true;me=0;players=[mkPlayer(0,myName(),0)];conns.clear();inRound=false;myRoom=null;
   enterGame();
-  players[0].ready=true;myReady=true;checkStart();
 }
 
 /* ---------- AI 대전 ----------
@@ -746,8 +745,7 @@ function startAI(lv){
   AI.lv=lv;AI.lvName=AI_LV[lv].name;
   setMode('ai');isHost=true;me=0;conns.clear();inRound=false;myRoom=null;
   players=[mkPlayer(0,myName(),0),mkPlayer(1,AI.lvName,1)];players[1].ai=true;players[1].ready=true;
-  enterGame();
-  players[0].ready=true;myReady=true;checkStart();
+  enterGame(); /* 바로 시작하지 않고, 홀드/드랍 설정 후 '준비'를 누르면 시작 */
 }
 function setMode(m){if(!MODES[m])return;mode=m;MAXP=MODES[m].max}
 function send(o){try{if(conn&&conn.open)conn.send(o)}catch(e){}}
@@ -1535,7 +1533,7 @@ function ui(now){
     });
     return L.join('\n');
   };
-  if(phase==='wait')t='연결되었습니다!\n'+roster()+'\n'+rdy;
+  if(phase==='wait')t=(MODES[mode].solo||MODES[mode].ai)?roster()+'\n홀드·드롭을 고른 뒤\n\'시작\'을 누르세요':'연결되었습니다!\n'+roster()+'\n'+rdy;
   else if(phase==='over')t=endText+'\n'+roster()+'\n'+rdy;
   else if(phase==='count')t=String(Math.max(1,Math.ceil((countEnd-now)/1000)));
   else if(phase==='spec')t='탈락!\n경기가 끝날 때까지\n기다려 주세요';
@@ -1554,7 +1552,8 @@ function ui(now){
   if($('dropTxt').textContent!==dt2)$('dropTxt').textContent=dt2;
   const b=$('readyBtn');
   b.disabled=!(phase==='wait'||phase==='over');
-  b.textContent=myReady?'준비 취소':(phase==='over'?'다시 하기':'준비');
+  const sa=MODES[mode].solo||MODES[mode].ai;
+  b.textContent=myReady?(sa?'취소':'준비 취소'):(phase==='over'?'다시 하기':(sa?'▶ 시작':'준비'));
   const cmOn=canTeamChat(),cmEl=$('chatMode');
   if(cmEl.style.display!==(cmOn?'flex':'none'))cmEl.style.display=cmOn?'flex':'none';
   if(!cmOn&&chatTeam)setCM(false);

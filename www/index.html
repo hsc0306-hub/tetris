@@ -410,6 +410,12 @@ const SHAPES={I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],O:[[2,2],[2,2]],T:[[0,
 const TYPES='IOTSZJL';
 const ATTACK=[0,0,1,2,4];
 const PFX='wtetris2p-';
+/* 연결 보조 서버(STUN/TURN): 서로 다른 통신망(LTE↔Wi-Fi 등)에서도 연결되도록 여러 개 등록 */
+const PCFG={config:{iceServers:[
+  {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']},
+  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'},
+  {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
+]}};
 const LIBS=['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js'];
 
 /* ---------- 소리 (효과음 + BGM) ---------- */
@@ -993,7 +999,7 @@ function becomeHost(){
   reopenHost();
 }
 function reopenHost(){
-  const hp=new Peer(PFX+roomCode);peer=hp;
+  const hp=new Peer(PFX+roomCode,PCFG);peer=hp;
   hp.on('open',()=>{
     if(hp!==peer)return;
     migrating=false;
@@ -1015,7 +1021,7 @@ function reopenHost(){
 }
 function startRejoin(){
   let tries=0;
-  try{if(!peer||peer.destroyed||peer.disconnected){try{peer&&peer.destroy()}catch(e){}peer=new Peer()}}catch(e){peer=new Peer()}
+  try{if(!peer||peer.destroyed||peer.disconnected){try{peer&&peer.destroy()}catch(e){}peer=new Peer(undefined,PCFG)}}catch(e){peer=new Peer(undefined,PCFG)}
   const pp=peer;
   pp.on('error',()=>{if(pp===peer&&migrating&&rjRetry)rjRetry()});
   const go=()=>{
@@ -1097,7 +1103,7 @@ async function makeRoom(){
 }
 function openRoom(){
   roomCode=rcode();st('방을 만드는 중…');
-  peer=new Peer(PFX+roomCode);
+  peer=new Peer(PFX+roomCode,PCFG);
   peer.on('open',()=>{
     st('');
     $('menu').style.display='none';$('hostView').style.display='block';
@@ -1151,7 +1157,7 @@ async function joinRoom(code){
   $('jMsg').textContent='방장에게 연결하고 있습니다. 잠시만 기다려 주세요.';
   try{await loadPeerLib()}catch(e){return jfail('연결 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.')}
   const to=setTimeout(()=>{if(phase==='lobby')jfail('연결 시간이 초과되었습니다.\n방장이 방을 열어 둔 상태인지 확인하고, 안 되면 다른 브라우저나 휴대폰 데이터로 시도해 보세요.')},20000);
-  peer=new Peer();
+  peer=new Peer(undefined,PCFG);
   peer.on('open',()=>{
     const c=peer.connect(PFX+code,{serialization:'json',reliable:true});
     setupConn(c);
